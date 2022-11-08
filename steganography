@@ -1,0 +1,163 @@
+# .jpg carrier image
+# Code logic - LSB modification
+#
+# Take in the message to be embedded.
+# Convert the message to a bit stream of 1s and 0s like - 1,0,1,1,0 .....
+#
+#
+# Embed logic as below
+# Read the image bytes in a binary form like '01000100'
+# Start 3000 bytes from the end [Selected as this value because the .jpg carrier image I had
+# rendered well in this range of bytes ]
+# check if the byte is a control byte or not
+# if not, remove the lsb. Add the 1s and 0s of the message as the new lsb
+#
+# Extract logic as below
+# Start 3000 bytes from the end and go up until the length of the embedded message
+# Select the byte if not a control byte and pop the lsb
+# Create a stream of the popped lsb and group into bytes like - '01001000', '10001100', ............
+# write the bytes to the outfile which has the embedded message
+import os
+import hashlib
+
+
+def embedder(message, control_values_bin):
+    """
+    used to embed the message in the image
+    """
+    image_input = input('Enter the image to embed the message in: ')
+    image_input_size = os.stat(image_input).st_size
+    # the message to be embedded will start from the byte which is 3000 bytes from the end
+    pointer = image_input_size - 3000
+    image_input_data = open(image_input, 'rb')
+    image_input_data_readable = image_input_data.read()
+    print("The .jpg input file you entered:", image_input)
+    print("Size of the input image file in bytes is:", image_input_size)
+    print("Md5 Hash of the input image file is: ", hashlib.md5(image_input_data_readable).hexdigest())
+
+    # list binary contains a binary value like '01001000' of all bytes in the image
+    list_binary = []
+    for byte in image_input_data_readable:
+        list_binary.append(bin(byte))
+    counter = 0
+    new_value = {}
+
+    # list_binary = ['01001000', '000010000', .....], lsb manipulation will start at the index in the list which is 3000
+    # less than the last element in the list
+    for index, element in enumerate(list_binary[pointer:]):
+        # check if element is a control byte
+        if element in control_values_bin:
+            continue
+        # modify lsb of elements bigger than 4 bits in size
+        if len(element) > 4:
+            if counter < len(message):
+                # everything except the lsb, the lsb goes out here
+                element_1 = element[:-1]
+                # the lsb which went out above is now added with the bit 1 or 0 of the message to be embedded.
+                # The lsb modification has happened
+                element_2 = element_1 + str(message[counter])
+                value = element_2
+                key = index + pointer
+                new_value[key] = value
+                counter += 1
+
+    # switch the lsb modified elements with their old values in the original image
+    for key, value in new_value.items():
+        list_binary.pop(key)
+        list_binary.insert(key, value)
+
+    list_hex = []
+    for i in list_binary:
+        list_hex.append(hex(int(i, 2)))
+
+    out_file = image_input.rstrip('.jpg')+'embedded.jpg'
+    print("The embedded file is:", out_file)
+
+    with open(out_file, 'wb') as output:
+        output.write(bytearray(int(i, 16) for i in list_hex))
+    output.close()
+    image_output_size = os.stat(out_file).st_size
+    print("Size of the embedded file in bytes is:", image_output_size)
+    print("The md5 hash of the embedded file is: ", hashlib.md5(open(out_file, 'rb').read()).hexdigest())
+
+
+def extractor(control_values_bin, message_len):
+    """
+    used to extract the message from the embedded image
+    """
+    image_decode = input('Enter the image to decode the message from: ')
+    image_data = open(image_decode, 'rb')
+    image_data_decode = image_data.read()
+
+    # the image size does not change, hence start at the byte 3000 bytes from the end
+    image_size = os.stat(image_decode).st_size
+    pointer = image_size - 3000
+
+    # list binary contains a binary value like '01001000' of all bytes in the image
+    list_binary = []
+    for byte in image_data_decode:
+        list_binary.append(bin(byte))
+
+
+    data_values = []
+    counter = 0
+    for element in list_binary[pointer:]:
+        # check if element is a control byte
+        if element in control_values_bin:
+            continue
+        # get all required bytes, go on only until the embedded message length as after that, the lsb bits are from the
+        # original image and do not contain the embedded message
+        if len(element) > 4:
+            if counter < message_len:
+                data_values.append(element)
+                counter += 1
+
+    bit_stream = []
+    for each in data_values:
+        new = str(each.lstrip('0b'))
+        new_1 = new[-1:]
+        bit_stream.append(new_1)
+
+    with open('embedded_message.txt', 'a') as output:
+        for a in range(0, len(bit_stream), 8):
+            val = bit_stream[a:a + 8]
+            val_1 = ''.join(val)
+            # this will convert '01101000' to 'H' and likewise for all other values
+            output.write((chr(int(val_1, 2))))
+    output.close()
+
+    print("Your extracted message is in the file - embedded_message.txt")
+
+
+if __name__ == "__main__":
+    # Enter you file which contains the message you want to embed."
+    message_file = input('Enter your message file which contains the secret message which you want to embed or extract: ')
+    message_file_data = open(message_file, 'r')
+    message_file_data_readable = message_file_data.read()
+    message = list(map(int, ''.join([bin(ord(i)).lstrip('0b').rjust(8, '0') for i in message_file_data_readable])))
+    # message_len is like a shared or a secret key. In this code, it serves the purpose of knowing exactly how many bits
+    # are contained in the message which is to be embedded. It helps in the message extraction.
+    message_len = len(message)
+
+
+    control_values_bin = []
+    # Control bits for the .jpg image as identified from https://en.wikipedia.org/wiki/JPEG.
+    control_values = ['0xFF', '0xD8', '0xD9', '0xC0', '0xC1', '0xC2', '0xC3', '0xC4', '0xC5', '0xDB', '0xDD', '0xDA',
+                      '0xDC', '0xD0', '0xD1', '0xD2', '0xD3', '0xD4', '0xD5', '0xD6', '0xD7', '0xE1', '0xE2', '0xE3',
+                      '0xE4', '0xE5', '0xE6', '0xE7', '0xE8', '0xE9', '0xFE', '0xE0']
+
+    # control_values_bin contains the binary representation like '01000000' of the control values described above'
+    for control in control_values:
+        control_values_bin.append(str(bin(int(control, 16))))
+
+    choice = input('You can now go ahead and selected what you want to do.\n'
+                   'Enter your choice of \n1:Embed the message to a .jpg image '
+                   '\nor\n2:Extract the message from an image which is already embedded. '
+                   '\nPlease enter either 1 or 2, no other inputs allowed.')
+    if choice == '1':
+        embedder(message, control_values_bin)
+
+    elif choice == '2':
+        extractor(control_values_bin, message_len)
+    else:
+        print("Your choice is invalid. Enter 1 or 2 based on what you want to do.")
